@@ -1,0 +1,174 @@
+# this playbook installs nginx to serve a static website
+# depends on install_security.yaml
+
+# install ansible
+#    pip3 install ansible
+
+# run this playbook
+#   ansible-playbook -i hosts.ini install_nginx.yaml -K
+#   -K queries sudo password
+#   --check runs in check mode
+---
+- hosts: vps_ionos
+  gather_facts: false
+  become: true
+  vars:
+    nginx_conf_dir: /etc/nginx/sites-available
+    nginx_conf_link_dir: /etc/nginx/sites-enabled
+    web_root: /var/www/html/{{ domain_name }}
+    netdata_auth_file: /etc/nginx/.netdata_auth
+  tasks:
+    - name: Gather Ansible facts as non-root user
+      ansible.builtin.setup:
+        gather_subset: all
+      become: false
+
+    - name: Install Nginx and Certbot
+      ansible.builtin.apt:
+        pkg:
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+          - git
+        update_cache: true
+        state: latest
+
+    - name: Remove default Nginx configuration
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+        force: true
+
+    - name: Start and enable Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Ensure web root directory exists
+      ansible.builtin.file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Create Netdata auth file
+      command: htpasswd -bc {{ netdata_auth_file }} {{ netdata_user }} {{ netdata_password }}
+      args:
+        creates: "{{ netdata_auth_file }}"
+
+    - name: Configure Nginx for Netdata
+      copy:
+        dest: "{{ nginx_conf_dir }}/netdata"
+        content: |
+          server {
+              listen 80;
+              listen [::]:80;
+
+              server_name {{ domain_name }};
+
+              location /netdata {
+                  proxy_pass http://localhost:19999;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  
+                  auth_basic "Restricted Access";
+                  auth_basic_user_file {{ netdata_auth_file }};
+              }
+          }
+      notify: test nginx config
+
+    - name: Ensure the Netdata site is enabled
+      file:
+        src: "{{ nginx_conf_dir }}/netdata"
+        dest: "{{ nginx_conf_link_dir }}/netdata"
+        state: link
+
+    - name: Clone GitHub repository with static site
+      ansible.builtin.git:
+        repo: "https://{{ github_user_name }}:{{ github_token }}@github.com/{{ github_repo }}"
+        dest: "{{ web_root }}"
+        version: "{{ github_branch }}"
+        force: yes
+        accept_hostkey: yes
+
+    - name: Create Nginx configuration file for static site
+      ansible.builtin.copy:
+        dest: "{{ nginx_conf_dir }}/{{ domain_name }}"
+        content: |
+          server {
+              listen 80;
+              listen [::]:80;
+
+              server_name {{ domain_name }};
+
+              root {{ web_root }};
+              index index.html index.htm;
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+
+              location ~ /.well-known/acme-challenge {
+                  allow all;
+              }
+          }
+      notify: test nginx config
+
+    - name: Create symbolic link to enable site
+      ansible.builtin.file:
+        src: "{{ nginx_conf_dir }}/{{ domain_name }}"
+        dest: "{{ nginx_conf_link_dir }}/{{ domain_name }}"
+        state: link
+      notify: test nginx config
+
+    - name: Obtain SSL certificate from Let's Encrypt
+      ansible.builtin.command: >
+        certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos
+        --email {{ email }}
+      notify: test nginx config
+
+    - name: Add security headers to Nginx configuration
+      ansible.builtin.blockinfile:
+        path: "{{ nginx_conf_dir }}/{{ domain_name }}"
+        block: |
+          server {
+              listen 443 ssl;
+              ssl_certificate /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/{{ domain_name }}/privkey.pem;
+
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_prefer_server_ciphers on;
+              ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
+              ssl_ecdh_curve secp384r1;
+              ssl_session_cache shared:SSL:10m;
+              ssl_session_tickets off;
+              ssl_stapling on;
+              ssl_stapling_verify on;
+              resolver 8.8.8.8 8.8.4.4 valid=300s;
+              resolver_timeout 5s;
+              add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload";
+              add_header X-Frame-Options DENY;
+              add_header X-Content-Type-Options nosniff;
+          }
+      notify: test nginx config
+
+    - name: Add cron job to update site from GitHub
+      cron:
+        name: "Update website from GitHub"
+        minute: "0"
+        hour: "0"
+        job: "cd {{ web_root }} && git pull origin {{ github_branch }}"
+
+  handlers:
+    - name: test nginx config
+      command: nginx -t
+      notify: reload nginx
+
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded

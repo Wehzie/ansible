@@ -1,0 +1,243 @@
+# this playbook starts security services
+
+# install ansible
+#    pip3 install ansible
+
+# run this playbook
+#   ansible-playbook -i hosts.ini install_security.yaml -K
+#   -K queries sudo password
+#   --check runs in check mode
+---
+- hosts: vps_ionos
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Gather Ansible facts as non-root user
+      ansible.builtin.setup:
+        gather_subset: all
+      become: false
+
+    - name: Install general utils
+      ansible.builtin.apt:
+        pkg:
+          - vim
+          - htop
+          - cron
+        update_cache: true
+        state: latest
+
+    - name: Ensure PermitRootLogin is no
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: PermitRootLogin no
+      notify: restart ssh
+
+    - name: Ensure PasswordAuthentication is no
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: PasswordAuthentication no
+      notify: restart ssh
+
+    - name: Install UFW
+      ansible.builtin.apt:
+        pkg:
+          - ufw
+        update_cache: true
+        state: latest
+
+    - name: Set UFW default deny
+      community.general.ufw:
+        state: disabled
+        policy: deny
+
+    - name: Set UFW allowed ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop:
+        - ssh # ssh
+        # - 22000 # syncthing
+        - 80 # http
+        - 443 # https
+    
+    # - name: Allow UFW syncthing UDP
+    #   community.general.ufw:
+    #     rule: allow
+    #     port: 21027 # syncthing
+    #     proto: udp
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+
+    - name: Install fail2ban
+      ansible.builtin.apt:
+        pkg:
+          - fail2ban
+        update_cache: true
+        state: latest
+
+    - name: Ensure fail2ban is running
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+        enabled: true
+
+    - name: Install unattended-upgrades
+      ansible.builtin.apt:
+        pkg:
+          - unattended-upgrades
+          - apt-listchanges
+        update_cache: true
+        state: latest
+
+    - name: Configure unattended-upgrades
+      ansible.builtin.debconf:
+        name: unattended-upgrades
+        question: unattended-upgrades/enable_auto_updates
+        value: 'true'
+        vtype: select
+
+    - name: Install AppArmor
+      ansible.builtin.apt:
+        pkg:
+          - apparmor
+        update_cache: true
+        state: latest
+
+    - name: Ensure AppArmor is running
+      ansible.builtin.service:
+        name: apparmor
+        state: started
+        enabled: true
+
+    - name: Install rkhunter
+      ansible.builtin.apt:
+        pkg:
+          - rkhunter
+        update_cache: true
+        state: latest
+
+    # - name: DON'T update rkhunter for security reasons, get updates via apt
+    #   ansible.builtin.command:
+    #     cmd: rkhunter --update
+        
+    - name: Create rkhunter check script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/rkhunter_cron.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          /usr/bin/rkhunter --update
+          /usr/bin/rkhunter --check --sk --report-warnings-only
+
+    - name: Schedule rkhunter cron job
+      ansible.builtin.cron:
+        name: "Run rkhunter check"
+        minute: "0"
+        hour: "3"
+        job: "/usr/local/bin/rkhunter_cron.sh"
+        user: root
+
+    - name: Install clamav
+      ansible.builtin.apt:
+        pkg:
+          - clamav
+          - clamav-daemon
+          - clamav-freshclam
+        update_cache: true
+        state: latest
+
+    - name: Start and enable clamav
+      ansible.builtin.service:
+        name: clamav-daemon
+        state: started
+        enabled: true
+    
+    - name: Create ClamAV scan script
+      copy:
+        dest: /usr/local/bin/clamav_scan.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          LOGFILE="/var/log/clamav/clamav-$(date +'%Y-%m-%d').log"
+          DIRSCAN="/"
+
+          # Update ClamAV database
+          /usr/bin/freshclam
+
+          # Run the scan
+          /usr/bin/clamscan -r $DIRSCAN --exclude-dir="^/sys" --exclude-dir="^/proc" --exclude-dir="^/dev" --exclude-dir="^/run" --exclude-dir="^/var" --exclude-dir="^/mnt" --exclude-dir="^/media" --exclude-dir="^/tmp" --log=$LOGFILE
+
+    - name: Create ClamAV log directory
+      file:
+        path: /var/log/clamav
+        state: directory
+        mode: '0755'
+
+    - name: Add ClamAV scan cron job
+      cron:
+        name: "ClamAV Scan"
+        minute: "0"
+        hour: "4"
+        day: "*"
+        month: "*"
+        weekday: "0"
+        job: "/usr/local/bin/clamav_scan.sh"
+
+  
+    - name: Install Netdata dependencies
+      apt:
+        name:
+          - zlib1g-dev
+          - uuid-dev
+          - libmnl-dev
+          - gcc
+          - make
+          - git
+          - autoconf
+          - autoconf-archive
+          - autogen
+          - automake
+          - pkg-config
+          - curl
+          - jq
+          - nodejs
+          - python3
+          - apache2-utils
+        state: latest
+        update_cache: true
+
+    - name: Install Netdata
+      ansible.builtin.shell: |
+        curl https://get.netdata.cloud/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --stable-channel --claim-token {{ netdata_claim_token }} --claim-rooms {{ netdata_claim_rooms }} --claim-url {{ netdata_claim_url }}
+
+    - name: Configure Netdata health notifications
+      ansible.builtin.copy:
+        dest: /etc/netdata/health_alarm_notify.conf
+        mode: '0600'
+        content: |
+          # Enable notifications
+          ENABLED=YES
+
+          # Enable Matrix notifications
+          SEND_MATRIX="YES"
+          # Your Matrix homeserver URL
+          MATRIX_HOMESERVER="{{ matrix_homeserver }}""
+          # Your Matrix access token
+          MATRIX_ACCESS_TOKEN="{{ matrix_access_token }}""
+          # Your Matrix room ID
+          DEFAULT_RECIPIENT_MATRIX="{{ default_recipient_matrix }}""
+
+  handlers:
+    - name: restart ssh
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+    - name: restart fail2ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: restarted

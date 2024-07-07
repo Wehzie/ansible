@@ -1,0 +1,14 @@
+# Ansible related files
+*.retry
+.vault_pass
+*.vault
+secrets.yml
+secrets.yaml
+hosts.ini
+hosts.yml
+hosts.yaml
+
+# Other sensitive files
+*.key
+*.pem
+*.enc

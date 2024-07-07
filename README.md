@@ -1,2 +1,4 @@
-# ansible
-Ansible playbooks, architecture as code &lt;3
+# Ansible ❤️
+
+Ansible playbooks for architecture as code.
+Suggestions for security improvements are very welcome.
