@@ -53,20 +53,93 @@
         group: www-data
         mode: '0755'
 
+    - name: Mark the web root as safe directory for git
+      ansible.builtin.command: git config --global --add safe.directory "{{ web_root }}"
+
+    - name: Clone GitHub repository with static site
+      ansible.builtin.git:
+        repo: "https://{{ github_access_token }}:x-oauth-basic@github.com/{{ git_repo }}.git"
+        dest: "{{ web_root }}"
+        version: "{{ git_branch }}"
+        force: yes
+        accept_hostkey: yes
+
+    - name: Create basic Nginx configuration for ACME challenge
+      ansible.builtin.copy:
+        dest: "{{ nginx_conf_dir }}/{{ domain_name }}"
+        content: |
+          server {
+              listen 80;
+              server_name {{ domain_name }} www.{{ domain_name }};
+              
+              # Redirect all HTTP requests to HTTPS
+              location / {
+                  return 301 https://$host$request_uri;
+              }
+
+              # Allow access to the .well-known/acme-challenge directory for Certbot
+              location ~ /.well-known/acme-challenge {
+                  allow all;
+                  root {{ web_root }};
+              }
+          }
+      notify: test nginx config
+
+    - name: Create symbolic link to enable site
+      ansible.builtin.file:
+        src: "{{ nginx_conf_dir }}/{{ domain_name }}"
+        dest: "{{ nginx_conf_link_dir }}/{{ domain_name }}"
+        state: link
+      notify: test nginx config
+
+    - name: Check for SSL certificate and key existence
+      stat:
+        path: "/etc/letsencrypt/live/{{ domain_name }}/{{ item }}"
+      register: cert_files
+      loop:
+        - fullchain.pem
+        - privkey.pem
+      check_mode: false
+
+    # TODO: use acme_certificate_module
+    # https://docs.ansible.com/ansible/2.9/modules/acme_certificate_module.html
+    - name: Obtain SSL certificate from Let's Encrypt
+      ansible.builtin.command: >
+        certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos
+        --email {{ email }}
+      notify: test nginx config
+      # help ensure the certificate is only obtained once
+      when: not (cert_files.results[0].stat.exists and cert_files.results[1].stat.exists)
+
     - name: Create Netdata auth file
       command: htpasswd -bc {{ netdata_auth_file }} {{ netdata_user }} {{ netdata_password }}
       args:
         creates: "{{ netdata_auth_file }}"
 
-    - name: Configure Nginx for Netdata
-      copy:
-        dest: "{{ nginx_conf_dir }}/netdata"
-        content: |
+    - name: Add security headers to Nginx configuration and proxy Netdata
+      ansible.builtin.blockinfile:
+        path: "{{ nginx_conf_dir }}/{{ domain_name }}"
+        block: |
           server {
-              listen 80;
-              listen [::]:80;
+              listen 443 ssl;
+              ssl_certificate /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/{{ domain_name }}/privkey.pem;
+              include /etc/letsencrypt/options-ssl-nginx.conf;
+              ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+              
+              server_name {{ domain_name }} www.{{ domain_name }};
+              root {{ web_root }};
+              index index.html index.htm;
 
-              server_name {{ domain_name }};
+              ssl_stapling on;
+              ssl_stapling_verify on;
+              ssl_ecdh_curve secp384r1;
+              ssl_session_cache shared:SSL:10m;
+              add_header X-Frame-Options DENY;
+              add_header X-Content-Type-Options nosniff;
+              add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload";
+              # TODO: 'unsafe-inline' is not recommended due to XSS attacks
+              add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'";
 
               location /netdata {
                   proxy_pass http://localhost:19999;
@@ -81,90 +154,15 @@
           }
       notify: test nginx config
 
-    - name: Ensure the Netdata site is enabled
-      file:
-        src: "{{ nginx_conf_dir }}/netdata"
-        dest: "{{ nginx_conf_link_dir }}/netdata"
-        state: link
-
-    - name: Mark the web root as safe directory for git
-      ansible.builtin.command: git config --global --add safe.directory "{{ web_root }}"
-
-    - name: Clone GitHub repository with static site
-      ansible.builtin.git:
-        repo: "https://{{ github_access_token }}:x-oauth-basic@github.com/{{ git_repo }}.git"
-        dest: "{{ web_root }}"
-        version: "{{ git_branch }}"
-        force: yes
-        accept_hostkey: yes
-
-    - name: Create Nginx configuration file for static site
-      ansible.builtin.copy:
-        dest: "{{ nginx_conf_dir }}/{{ domain_name }}"
-        content: |
-          server {
-              listen 80;
-              listen [::]:80;
-
-              server_name {{ domain_name }};
-
-              root {{ web_root }};
-              index index.html index.htm;
-
-              location / {
-                  try_files $uri $uri/ =404;
-              }
-
-              location ~ /.well-known/acme-challenge {
-                  allow all;
-              }
-          }
-      notify: test nginx config
-
-    - name: Create symbolic link to enable site
-      ansible.builtin.file:
-        src: "{{ nginx_conf_dir }}/{{ domain_name }}"
-        dest: "{{ nginx_conf_link_dir }}/{{ domain_name }}"
-        state: link
-      notify: test nginx config
-
-    - name: Obtain SSL certificate from Let's Encrypt
-      ansible.builtin.command: >
-        certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos
-        --email {{ email }}
-      notify: test nginx config
-
-    - name: Add security headers to Nginx configuration
-      ansible.builtin.blockinfile:
-        path: "{{ nginx_conf_dir }}/{{ domain_name }}"
-        block: |
-          server {
-              listen 443 ssl;
-              ssl_certificate /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem;
-              ssl_certificate_key /etc/letsencrypt/live/{{ domain_name }}/privkey.pem;
-
-              ssl_protocols TLSv1.2 TLSv1.3;
-              ssl_prefer_server_ciphers on;
-              ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
-              ssl_ecdh_curve secp384r1;
-              ssl_session_cache shared:SSL:10m;
-              ssl_session_tickets off;
-              ssl_stapling on;
-              ssl_stapling_verify on;
-              resolver 8.8.8.8 8.8.4.4 valid=300s;
-              resolver_timeout 5s;
-              add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload";
-              add_header X-Frame-Options DENY;
-              add_header X-Content-Type-Options nosniff;
-          }
-      notify: test nginx config
-
     - name: Add cron job to update site from GitHub
       cron:
         name: "Update website from GitHub"
         minute: "0"
         hour: "0"
         job: "cd {{ web_root }} && git pull origin {{ git_branch }}"
+
+    - name: Test certbot renewal process
+      command: certbot renew --dry-run
 
   handlers:
     - name: test nginx config
