@@ -9,12 +9,13 @@
 #   -K queries sudo password
 #   --check runs in check mode
 ---
-- hosts: vps_ionos
+- hosts: vps_pubserv
   gather_facts: false
   become: true
   vars:
     nginx_conf_dir: /etc/nginx/sites-available
     nginx_conf_link_dir: /etc/nginx/sites-enabled
+    nginx_sites_customizations_dir: /etc/nginx/sites-customizations
     web_root: /var/www/html/{{ domain_name }}
     netdata_auth_file: /etc/nginx/.netdata_auth
   tasks:
@@ -151,6 +152,8 @@
                   auth_basic "Restricted Access";
                   auth_basic_user_file {{ netdata_auth_file }};
               }
+
+              include {{ nginx_sites_customizations_dir }}/{{ domain_name }}*;
           }
       notify: test nginx config
 

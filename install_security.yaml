@@ -8,7 +8,7 @@
 #   -K queries sudo password
 #   --check runs in check mode
 ---
-- hosts: vps_ionos
+- hosts: vps_pubserv
   gather_facts: false
   become: true
   tasks:
@@ -157,7 +157,7 @@
         enabled: true
     
     - name: Create ClamAV scan script
-      copy:
+      ansible.builtin.copy:
         dest: /usr/local/bin/clamav_scan.sh
         mode: '0755'
         content: |
@@ -172,13 +172,13 @@
           /usr/bin/clamscan -r $DIRSCAN --exclude-dir="^/sys" --exclude-dir="^/proc" --exclude-dir="^/dev" --exclude-dir="^/run" --exclude-dir="^/var" --exclude-dir="^/mnt" --exclude-dir="^/media" --exclude-dir="^/tmp" --log=$LOGFILE
 
     - name: Create ClamAV log directory
-      file:
+      ansible.builtin.file:
         path: /var/log/clamav
         state: directory
         mode: '0755'
 
     - name: Add ClamAV scan cron job
-      cron:
+      ansible.builtin.cron:
         name: "ClamAV Scan"
         minute: "0"
         hour: "4"
@@ -189,7 +189,7 @@
 
   
     - name: Install Netdata dependencies
-      apt:
+      ansible.builtin.apt:
         name:
           - zlib1g-dev
           - uuid-dev
@@ -230,6 +230,8 @@
           MATRIX_ACCESS_TOKEN="{{ matrix_access_token }}""
           # Your Matrix room ID
           DEFAULT_RECIPIENT_MATRIX="{{ default_recipient_matrix }}""
+
+    # TODO reduce netdata resource usage via config
 
   handlers:
     - name: restart ssh
