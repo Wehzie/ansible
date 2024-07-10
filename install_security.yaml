@@ -229,7 +229,6 @@
         weekday: "0"
         job: "/usr/local/bin/clamav_scan.sh"
 
-  
     - name: Install Netdata dependencies
       ansible.builtin.apt:
         name:
@@ -254,7 +253,7 @@
 
     - name: Install Netdata
       ansible.builtin.shell: |
-        curl https://get.netdata.cloud/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --stable-channel --claim-token {{ netdata_claim_token }} --claim-rooms {{ netdata_claim_rooms }} --claim-url {{ netdata_claim_url }}
+        curl https://get.netdata.cloud/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --stable-channel --disable-telemetry
 
     - name: Configure Netdata health notifications
       ansible.builtin.copy:
