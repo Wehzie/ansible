@@ -229,51 +229,6 @@
         weekday: "0"
         job: "/usr/local/bin/clamav_scan.sh"
 
-    - name: Install Netdata dependencies
-      ansible.builtin.apt:
-        name:
-          - zlib1g-dev
-          - uuid-dev
-          - libmnl-dev
-          - gcc
-          - make
-          - git
-          - autoconf
-          - autoconf-archive
-          - autogen
-          - automake
-          - pkg-config
-          - curl
-          - jq
-          - nodejs
-          - python3
-          - apache2-utils
-        state: latest
-        update_cache: true
-
-    - name: Install Netdata
-      ansible.builtin.shell: |
-        curl https://get.netdata.cloud/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --stable-channel --disable-telemetry
-
-    - name: Configure Netdata health notifications
-      ansible.builtin.copy:
-        dest: /etc/netdata/health_alarm_notify.conf
-        mode: '0600'
-        content: |
-          # Enable notifications
-          ENABLED=YES
-
-          # Enable Matrix notifications
-          SEND_MATRIX="YES"
-          # Your Matrix homeserver URL
-          MATRIX_HOMESERVER="{{ matrix_homeserver }}""
-          # Your Matrix access token
-          MATRIX_ACCESS_TOKEN="{{ matrix_access_token }}""
-          # Your Matrix room ID
-          DEFAULT_RECIPIENT_MATRIX="{{ default_recipient_matrix }}""
-
-    # TODO reduce netdata resource usage via config
-
   handlers:
     - name: restart ssh
       ansible.builtin.service:
