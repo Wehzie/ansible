@@ -26,18 +26,60 @@
         update_cache: true
         state: latest
 
-    - name: Ensure PermitRootLogin is no
+    - name: Harden SSH, ensure PermitRootLogin is no
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?PermitRootLogin'
         line: PermitRootLogin no
       notify: restart ssh
 
-    - name: Ensure PasswordAuthentication is no
+    - name: Harden SSH, ensure PasswordAuthentication is no
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?PasswordAuthentication'
         line: PasswordAuthentication no
+      notify: restart ssh
+
+    - name: Harden SSH, ensure KbdInteractiveAuthentication is no
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?KbdInteractiveAuthentication'
+        line: KbdInteractiveAuthentication no
+      notify: restart ssh
+
+    - name: Harden SSH, ensure ChallengeResponseAuthentication is no
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?ChallengeResponseAuthentication'
+        line: ChallengeResponseAuthentication no
+      notify: restart ssh
+
+    - name: Harden SSH, limit MaxAuthTries to 2
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?MaxAuthTries'
+        line: MaxAuthTries 2
+      notify: restart ssh
+    
+    - name: Harden SSH, disallow X11Forwarding
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?X11Forwarding'
+        line: X11Forwarding no
+      notify: restart ssh
+
+    - name: Harden SSH, disallow AgentForwarding
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?AllowAgentForwarding'
+        line: AllowAgentForwarding no
+      notify: restart ssh
+
+    - name: Harden SSH, limit AuthorizedKeysFile to .ssh/authorized_keys
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?AuthorizedKeysFile'
+        line: AuthorizedKeysFile .ssh/authorized_keys
       notify: restart ssh
 
     - name: Install UFW
