@@ -1,0 +1,170 @@
+# this playbook installs netdata
+
+# install ansible
+#    pip3 install ansible
+
+# run this playbook
+#   ansible-playbook -i hosts.ini install_netdata.yaml -K
+#   -K queries sudo password
+#   --check runs in check mode
+---
+- hosts: vps_pubserv
+  gather_facts: false
+  become: true
+  vars:
+    nginx_conf_dir: /etc/nginx/sites-available
+    nginx_conf_link_dir: /etc/nginx/sites-enabled
+    nginx_sites_customizations_dir: /etc/nginx/sites-customizations
+    web_root: /var/www/html/{{ domain_name }}
+    netdata_auth_file: /etc/nginx/.netdata_auth
+  tasks:
+    - name: Gather Ansible facts as non-root user
+      ansible.builtin.setup:
+        gather_subset: all
+      become: false
+
+    - name: Install Netdata dependencies
+      ansible.builtin.apt:
+        name:
+          - zlib1g-dev
+          - uuid-dev
+          - libmnl-dev
+          - gcc
+          - make
+          - git
+          - autoconf
+          - autoconf-archive
+          - autogen
+          - automake
+          - pkg-config
+          - curl
+          - jq
+          - nodejs
+          - python3
+          - apache2-utils
+        state: latest
+        update_cache: true
+
+    - name: Ensure path for Netdata auth file exists
+      ansible.builtin.file:
+        path: "{{ netdata_auth_file | dirname }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Create Netdata auth file
+      command: htpasswd -bc {{ netdata_auth_file }} {{ netdata_user }} {{ netdata_password }}
+      args:
+        creates: "{{ netdata_auth_file }}"
+
+    - name: Install Netdata
+      ansible.builtin.shell: |
+        curl https://get.netdata.cloud/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --stable-channel --disable-telemetry
+      args:
+        executable: /bin/bash
+
+    - name: Configure Netdata health notifications
+      ansible.builtin.copy:
+        dest: /etc/netdata/health_alarm_notify.conf
+        mode: '0755'
+        content: |
+          # Enable notifications
+          ENABLED=YES
+
+          SEND_MATRIX="YES"
+          MATRIX_HOMESERVER="{{ matrix_homeserver }}"
+          MATRIX_ACCESS_TOKEN="{{ matrix_access_token }}"
+          DEFAULT_RECIPIENT_MATRIX="{{ default_recipient_matrix }}"
+
+          SEND_TELEGRAM="YES"
+          TELEGRAM_BOT_TOKEN="{{ telegram_bot_token }}"
+          DEFAULT_RECIPIENT_TELEGRAM="{{ telegram_group_id }}"
+      notify: restart netdata
+    
+    - name: Set ownership and permissions for netdata directory
+      ansible.builtin.file:
+        path: /etc/netdata
+        owner: netdata
+        group: netdata
+        mode: '0755'
+        recurse: true
+
+    - name: Ensure Netdata config [global] section exists
+      lineinfile:
+        path: /etc/netdata/netdata.conf
+        regexp: '^\[global\]$'
+        line: '[global]'
+        state: present
+
+    - name: Configure Netdata update interval
+      lineinfile:
+        path: /etc/netdata/netdata.conf
+        regexp: '^(\s*)update every\s*=\s*\d+'
+        line: '    update every = 5'
+        insertafter: '^\[global\]$'
+
+    - name: Create sites customizations directory
+      ansible.builtin.file:
+        path: "{{ nginx_sites_customizations_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add upstream to nginx main config
+      blockinfile:
+        path: /etc/nginx/nginx.conf
+        insertafter: '^http {'
+        block: |
+          upstream netdata {
+              server 127.0.0.1:19999;
+              keepalive 64;
+          }
+
+    - name: Add Nginx configuration for netdata
+      blockinfile:
+        path: "{{ nginx_sites_customizations_dir }}/{{ domain_name }}_netdata"
+        create: true
+        block: |
+          location = /netdata {
+              return 301 /netdata/;
+          }
+
+          location ~ /netdata/(?<ndpath>.*) {
+              proxy_redirect off;
+              proxy_set_header Host $host;
+
+              proxy_set_header X-Forwarded-Host $host;
+              proxy_set_header X-Forwarded-Server $host;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_http_version 1.1;
+              proxy_pass_request_headers on;
+              proxy_set_header Connection "keep-alive";
+              proxy_store off;
+              proxy_pass http://netdata/$ndpath$is_args$args;
+
+              auth_basic "Restricted Access";
+              auth_basic_user_file {{ netdata_auth_file }};
+
+              gzip on;
+              gzip_proxied any;
+              gzip_types *;
+          }
+      notify: test nginx config
+
+    - name: Test Netdata health notifications
+      ansible.builtin.shell: |
+        sudo -u netdata bash -c 'export NETDATA_ALARM_NOTIFY_DEBUG=1 && /usr/libexec/netdata/plugins.d/alarm-notify.sh test'
+
+  handlers:
+    - name: test nginx config
+      ansible.builtin.command: nginx -t
+      notify: reload nginx
+
+    - name: reload nginx # reload = re-read config file
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+
+    - name: restart netdata # restart = stop + start
+      ansible.builtin.service:
+        name: netdata
+        state: restarted
+        enabled: true
