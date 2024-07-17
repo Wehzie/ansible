@@ -1,0 +1,271 @@
+# this playbook adds umami to an nginx static website
+# depends on install_nginx.yaml
+
+# install ansible
+#    pip3 install ansible
+
+# run this playbook
+#   ansible-playbook -i hosts.ini install_umami.yaml -K
+#   -K queries sudo password
+#   --check runs in check mode
+
+# in failed of mysql configuration, run the following commands:
+  # sudo apt-get purge mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-*
+  # sudo rm -rf /etc/mysql /var/lib/mysql
+  # sudo apt-get autoremove
+  # sudo apt-get autoclean
+---
+- hosts: vps_pubserv
+  gather_facts: false
+  become: true
+  vars:
+    nginx_conf_dir: /etc/nginx/sites-available
+    nginx_conf_link_dir: /etc/nginx/sites-enabled
+    nginx_sites_customizations_dir: /etc/nginx/sites-customizations
+    web_root: /var/www/html/{{ domain_name }}
+    umami_auth_file: /etc/nginx/.umami_auth
+    umami_install_dir: /home/{{ ansible_ssh_user }}/umami
+  tasks:
+    - name: Gather Ansible facts as non-root user
+      ansible.builtin.setup:
+        gather_subset: all
+      become: false
+
+    # the containered umami installation consumes too many resources
+    - name: Install MySQL and Python
+      ansible.builtin.apt:
+        pkg:
+          - mysql-server
+          - python3
+          - python3-pip
+          - python-is-python3
+          - python3-pymysql
+        update_cache: true
+        state: latest
+
+    - name: Start and enable MySQL
+      ansible.builtin.systemd:
+        name: mysql
+        state: started
+        enabled: true
+
+    - name: Set MySQL root password for all hosts
+      mysql_user:
+        name: root
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        host_all: true
+        password: "{{ mariadb_root_password }}"
+        state: present
+      ignore_errors: true
+      
+    - name: Allow root login from only localhost
+      community.mysql.mysql_user:
+        login_user: root
+        login_password: "{{ mariadb_root_password }}"
+        name: root
+        host: localhost
+        state: present
+
+    - name: Remove anonymous users
+      community.mysql.mysql_user:
+        login_user: root
+        login_password: "{{ mariadb_root_password }}"
+        name: ''
+        host_all: true
+        state: absent
+
+    - name: Remove the test database
+      community.mysql.mysql_db:
+        login_user: root
+        login_password: "{{ mariadb_root_password }}"
+        name: test
+        state: absent
+
+    - name: Create Umami database
+      community.mysql.mysql_db:
+        login_user: root
+        login_password: "{{ mariadb_root_password }}"
+        name: "umami-db"
+        state: present
+
+    - name: Create Umami-user and grant privileges
+      community.mysql.mysql_user:
+        login_user: root
+        login_password: "{{ mariadb_root_password }}"
+        name: umami-user
+        password: "{{ mariadb_umami_password }}" 
+        priv: "umami-db.*:ALL"
+        state: present
+
+    - name: Uninstall cmdtest to avoid conflicts with yarn
+      ansible.builtin.apt:
+        name: cmdtest
+        state: absent
+
+    - name: Echo the ansible user
+      ansible.builtin.debug:
+        msg: "{{ ansible_ssh_user }}"
+
+    - name: Install nvm
+      ansible.builtin.shell: >
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      args:
+        creates: "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Install node.js, npm and yarn with nvm
+      ansible.builtin.shell: >
+        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+        nvm install --lts
+        nvm install-latest-npm
+        npm install -g yarn
+        npm install -g pm2
+      args:
+        executable: /bin/bash
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Clone GitHub repository with umami
+      ansible.builtin.git:
+        repo: https://github.com/umami-software/umami.git
+        dest: "{{ umami_install_dir }}"
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Install Umami dependencies based on package.json.
+      ansible.builtin.shell: >
+        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+        yarn install
+      args:
+        executable: /bin/bash
+        chdir: "{{ umami_install_dir }}"
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Create .env file
+      ansible.builtin.copy:
+        dest: "{{ umami_install_dir }}/.env"
+        content: |
+          DATABASE_URL=mysql://umami-user:"{{ mariadb_umami_password }}"@localhost:3306/umami-db
+          BASE_PATH=/umami
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Check if Umami has been built
+      ansible.builtin.stat:
+        path: "{{ umami_install_dir }}/build"
+      register: umami_build
+      check_mode: false
+
+    - name: Build Umami
+      ansible.builtin.shell: >
+        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+        yarn build
+      args:
+        chdir: "{{ umami_install_dir }}"
+        executable: /bin/bash
+      when: umami_build.stat.exists == false
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+      register: build_output
+
+    - name: Debug Build Output
+      ansible.builtin.debug:
+        var: build_output
+
+    - name: Start Umami
+      ansible.builtin.shell: >
+        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+        pm2 start yarn --name umami -- start
+      args:
+        executable: /bin/bash
+        chdir: "{{ umami_install_dir }}"
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+      register: pm2_output
+
+    - name: Debug PM2 Output
+      ansible.builtin.debug:
+        var: pm2_output
+
+    - name: Let pm2 start on boot
+      ansible.builtin.shell: >
+        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+        pm2 startup
+      args:
+        executable: /bin/bash
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Save pm2 process list
+      ansible.builtin.shell: >
+        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+        pm2 save
+      args:
+        executable: /bin/bash
+      become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Nginx is running as www-data, add user to www-data group
+      ansible.builtin.user:
+        name: "{{ ansible_ssh_user }}"
+        groups: www-data
+        append: yes
+
+    - name: Update umami installation directory ownership and permissions
+      ansible.builtin.file:
+        path: "{{ umami_install_dir }}"
+        owner: "{{ ansible_ssh_user }}"
+        group: www-data
+        mode: '0755'
+        recurse: yes
+
+    - name: Create sites customizations directory
+      ansible.builtin.file:
+        path: "{{ nginx_sites_customizations_dir }}"
+        state: directory
+        mode: '0755'
+
+    # https://github.com/umami-software/umami/issues/2527#issuecomment-2032545772
+    - name: Add Nginx configuration for umami
+      blockinfile:
+        path: "{{ nginx_sites_customizations_dir }}/{{ domain_name }}_umami"
+        create: true
+        block: |
+          location /umami/_next/static/ {
+              alias {{ umami_install_dir }}/.next/static/;
+              access_log off;
+              expires max;
+          }
+          location /umami {
+              proxy_pass http://127.0.0.1:3000;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection 'upgrade';
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_cache_bypass $http_upgrade;
+          }
+      notify: test nginx config
+
+    - name: Print manual umami configuration instructions
+      ansible.builtin.debug:
+        msg: |
+          To complete the Umami installation
+          1. Change password for admin
+          2. Add a website https://umami.is/docs/add-a-website
+          3. Copy tracking code https://umami.is/docs/collect-data
+          4. Add tracking code to index.html header
+          
+  handlers:
+    - name: test nginx config
+      ansible.builtin.command: nginx -t
+      notify: reload nginx
+
+    - name: reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
