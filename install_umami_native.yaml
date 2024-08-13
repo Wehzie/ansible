@@ -189,22 +189,30 @@
       ansible.builtin.debug:
         var: pm2_output
 
-    - name: Let pm2 start on boot
+    - name: Save pm2 process list
       ansible.builtin.shell: >
-        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
-        pm2 startup
+        source "/home/rafael/.nvm/nvm.sh"
+        pm2 save
       args:
         executable: /bin/bash
       become: false
       become_user: "{{ ansible_ssh_user }}"
 
-    - name: Save pm2 process list
-      ansible.builtin.shell: >
-        source "{{ ansible_env.HOME }}/.nvm/nvm.sh"
-        pm2 save
+    - name: Capture the PM2 startup command (nvm)
+      ansible.builtin.shell: |
+        source "/home/rafael/.nvm/nvm.sh"
+        pm2 startup | grep "sudo env"
       args:
         executable: /bin/bash
+      register: pm2_startup_command
       become: false
+      become_user: "{{ ansible_ssh_user }}"
+
+    - name: Execute the PM2 startup command (nvm)
+      ansible.builtin.shell: "{{ pm2_startup_command.stdout }}"
+      args:
+        executable: /bin/bash
+      become: true
       become_user: "{{ ansible_ssh_user }}"
 
     - name: Nginx is running as www-data, add user to www-data group
