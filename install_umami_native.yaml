@@ -22,7 +22,6 @@
     nginx_conf_dir: /etc/nginx/sites-available
     nginx_conf_link_dir: /etc/nginx/sites-enabled
     nginx_sites_customizations_dir: /etc/nginx/sites-customizations
-    web_root: /var/www/html/{{ domain_name }}
     umami_auth_file: /etc/nginx/.umami_auth
     umami_install_dir: /home/{{ ansible_ssh_user }}/umami
   tasks:

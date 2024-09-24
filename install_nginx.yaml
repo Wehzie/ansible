@@ -49,7 +49,7 @@
       ansible.builtin.file:
         path: "{{ web_root }}"
         state: directory
-        owner: www-data
+        owner: "{{ ansible_ssh_user }}"
         group: www-data
         mode: '0755'
 
@@ -104,8 +104,7 @@
     # https://docs.ansible.com/ansible/2.9/modules/acme_certificate_module.html
     - name: Obtain SSL certificate from Let's Encrypt
       ansible.builtin.command: >
-        certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos
-        --email {{ email }}
+        certbot --nginx -d {{ domain_name }} -d www.{{ domain_name }} --non-interactive --agree-tos --email {{ email }}
       notify: test nginx config
       # help ensure the certificate is only obtained once
       when: not (cert_files.results[0].stat.exists and cert_files.results[1].stat.exists)

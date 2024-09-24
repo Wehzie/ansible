@@ -15,7 +15,6 @@
     nginx_conf_dir: /etc/nginx/sites-available
     nginx_conf_link_dir: /etc/nginx/sites-enabled
     nginx_sites_customizations_dir: /etc/nginx/sites-customizations
-    web_root: /var/www/html/{{ domain_name }}
     netdata_auth_file: /etc/nginx/.netdata_auth
   tasks:
     - name: Gather Ansible facts as non-root user
