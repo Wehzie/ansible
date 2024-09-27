@@ -147,7 +147,8 @@
               add_header X-Content-Type-Options nosniff;
               add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload";
               # TODO: 'unsafe-inline' is not recommended due to XSS attacks
-              add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'";
+              # TODO: 'unsafe-eval' is not recommended due to XSS attacks, needed for LogSeq's PIXI.js
+              add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; object-src 'none'";
 
               # add additional services via includes
               include {{ nginx_sites_customizations_dir }}/{{ domain_name }}*;
