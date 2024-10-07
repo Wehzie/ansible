@@ -71,12 +71,8 @@
 
           SEND_MATRIX="YES"
           MATRIX_HOMESERVER="{{ matrix_homeserver }}"
-          MATRIX_ACCESS_TOKEN="{{ matrix_access_token }}"
+          MATRIX_ACCESSTOKEN="{{ matrix_accesstoken }}"
           DEFAULT_RECIPIENT_MATRIX="{{ default_recipient_matrix }}"
-
-          SEND_TELEGRAM="YES"
-          TELEGRAM_BOT_TOKEN="{{ telegram_bot_token }}"
-          DEFAULT_RECIPIENT_TELEGRAM="{{ telegram_group_id }}"
       notify: restart netdata
     
     - name: Set ownership and permissions for netdata directory
