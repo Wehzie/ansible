@@ -1,0 +1,51 @@
+# this playbook installs nginx to serve a static website
+# depends on install_security.yaml
+
+# install ansible
+#    pip3 install ansible
+
+# run this playbook
+#   ansible-playbook -i hosts.ini install_sinesnake.yaml -K
+#   -K queries sudo password
+#   --check runs in check mode
+---
+- hosts: vps_pubserv
+  gather_facts: false
+  become: true
+  vars:
+    nginx_sites_customizations_dir: /etc/nginx/sites-customizations
+    sinesnake_root: /var/www/html/sinesnake/
+  tasks:
+    - name: Gather Ansible facts as non-root user
+      ansible.builtin.setup:
+        gather_subset: all
+      become: false
+
+    - name: Set permissions and ownership for SineSnake directory
+      ansible.builtin.file:
+        path: "{{ sinesnake_root }}"
+        state: directory
+        owner: "{{ ansible_ssh_user }}"
+        group: www-data
+        mode: '0755'
+
+    - name: Add Nginx configuration for sinesnake
+      blockinfile:
+        path: "{{ nginx_sites_customizations_dir }}/{{ domain_name }}_sinesnake"
+        create: true
+        block: |
+          location /sinesnake {
+              alias {{ sinesnake_root }};
+              index index.html;
+          }
+      notify: test nginx config
+
+  handlers:
+    - name: test nginx config
+      ansible.builtin.command: nginx -t
+      notify: reload nginx
+
+    - name: reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

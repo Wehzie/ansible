@@ -11,3 +11,4 @@ Order of installation.
 2. nginx
 3. netdata
 4. umami
+5. sinesnake
