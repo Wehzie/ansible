@@ -9,7 +9,7 @@
 #   -K queries sudo password
 #   --check runs in check mode
 
-# in failed of mysql configuration, run the following commands:
+# in case of a failed mysql configuration, run the following commands:
   # sudo apt-get purge mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-*
   # sudo rm -rf /etc/mysql /var/lib/mysql
   # sudo apt-get autoremove
@@ -107,7 +107,7 @@
 
     - name: Install nvm
       ansible.builtin.shell: >
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
       args:
         creates: "{{ ansible_env.HOME }}/.nvm/nvm.sh"
       become: false

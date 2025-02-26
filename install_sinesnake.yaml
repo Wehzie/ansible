@@ -1,5 +1,5 @@
 # this playbook installs nginx to serve a static website
-# depends on install_security.yaml
+# depends on install_nginx.yaml
 
 # install ansible
 #    pip3 install ansible
