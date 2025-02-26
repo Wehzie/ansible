@@ -148,7 +148,17 @@
               add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload";
               # TODO: 'unsafe-inline' is not recommended due to XSS attacks
               # TODO: 'unsafe-eval' is not recommended due to XSS attacks, needed for LogSeq's PIXI.js
-              add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; object-src 'none'";
+              # TODO: self host fonts and scripts
+              # https://cdn.jsdelivr.net needed for Appflowy
+              # https://fonts.googleapis.com needed for AppFlowy
+              # https://fonts.gstatic.com needed for AppFlowy
+              add_header Content-Security-Policy "
+                  default-src 'self';
+                  script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net;
+                  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                  font-src 'self' https://fonts.gstatic.com;
+                  object-src 'none';
+              ";
 
               # add additional services via includes
               include {{ nginx_sites_customizations_dir }}/{{ domain_name }}*;
